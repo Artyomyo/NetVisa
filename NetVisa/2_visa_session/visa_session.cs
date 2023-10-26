@@ -118,7 +118,8 @@ namespace NetVisa
             {
                 str = Encoding.ASCII.GetString(byteBuffer);
             }
-            return str.TrimEnd(new[] { '\r', '\n', '\0' });
+
+            return str;
         }
 
         /// <summary>
@@ -145,7 +146,7 @@ namespace NetVisa
             {
                 long position2 = stream.Position;
                 bool moreDataAvailable;
-                int stream1 = this.ReadToStream(stream, segmentSize, false, out moreDataAvailable);
+                int stream1 = this.ReadToStream(stream, segmentSize,  this.AssureResponseEndWithTc, out moreDataAvailable);
                 finished = !moreDataAvailable || stream1 < segmentSize;
                 ++segmentIx;
                 position1 += stream1;

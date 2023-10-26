@@ -16,7 +16,7 @@ namespace NetVisa
         /// If TRUE, each VISA read must end with TermChar. If not, the reading continues
         /// If FALSE, (default) the reading can end with any character
         /// </summary>
-        public bool AssureResponseEndWithTc = false;
+        public bool AssureResponseEndWithTc = true;
 
         /// <summary>
         /// Delay before each Write (not valid for segmented writes)

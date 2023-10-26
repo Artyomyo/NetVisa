@@ -1,4 +1,5 @@
 ﻿using System;
+using System.Diagnostics;
 using System.IO;
 using System.Text;
 
@@ -15,7 +16,7 @@ public class Visa : IDisposable
     public Resource_Manager resource_manager;
     private Driver _driver;
     /// <summary>Buffer for reading from instrument</summary>
-    private readonly byte[] _buffer = new byte[1000000];
+    private readonly byte[] _buffer = new byte[100000];
     private int? _cachedTimeout;
     /// <summary>Keeps the SRQ installed handler reference</summary>
     private Driver.EventHandler _installedVisaCsrqHandler;
@@ -272,7 +273,7 @@ public class Visa : IDisposable
     /// <param name="text">text to write</param>
     public void Write(string text)
     {
-        var terminationCharacter = Convert.ToChar(TerminationCharacter);
+        var terminationCharacter = (char)(TerminationCharacter);
 
         if (!text.EndsWith(terminationCharacter))
             text = text + terminationCharacter;
@@ -306,37 +307,65 @@ public class Visa : IDisposable
     /// <param name="readCount">Number of bytes actually read</param>
     /// <returns>Data as Byte array</returns>
     public virtual byte[] Read(
-      int maxLength,
-      out bool moreDataAvailable,
-      bool assureResponseEndWithTc,
-      out int readCount)
+        int maxLength,
+        out bool moreDataAvailable,
+        bool assureResponseEndWithTc,
+        out int readCount)
     {
         lock (this._readLocker)
         {
             if (maxLength > this._buffer.Length)
-                throw new Visa_Exception(this.Session.ResourceName, string.Format("Attempting to read data from instrument with maximum count bigger than public buffer size: {0} > {1}", maxLength, _buffer.Length));
-            uint read1;
-            int status1 = this._driver.Read(this.Session.Handle, this._buffer, (uint)maxLength, out read1);
+                throw new Visa_Exception(this.Session.ResourceName, $"Attempting to read data from instrument with maximum count bigger than public buffer size: {maxLength} > {_buffer.Length}");
+            Stopwatch ar = new Stopwatch();
+            ar.Start();
+            int status1 = this._driver.Read(this.Session.Handle, this._buffer, (uint)maxLength, out uint readCounter);
+            ar.Stop();
+
+            Console.WriteLine($"Elapsed time first read:{ar.ElapsedTicks}");
+
             if (status1 < 0)
                 this._ThrowOnError(status1, "VISA Read -");
+
             moreDataAvailable = this._MoreDataIsAvailable(status1);
-            if (assureResponseEndWithTc && read1 < maxLength && read1 > 0U)
+
+            if (moreDataAvailable)
             {
-                //byte terminationByte = Convert.ToByte(this.TerminationCharacter);
-                if (this._buffer[(int)read1 - 1] != TerminationCharacter)
+                var a = (uint)_buffer.Length - readCounter;
+                byte[] numArray = new byte[a];
+                
+                ar.Restart();
+
+                ar.Start();
+
+                int status2 = this._driver.Read(this.Session.Handle, numArray, a, out uint secondReadCounter);
+                ar.Stop();
+                Console.WriteLine($"Elapsed time second read:{ar.ElapsedMilliseconds}");
+
+                Buffer.BlockCopy(numArray, 0, _buffer, (int)readCounter, (int)secondReadCounter);
+
+                moreDataAvailable = this._MoreDataIsAvailable(status2);
+                readCounter += secondReadCounter;
+            }
+
+            readCount = (int)readCounter;
+            byte[] returnBuffer;
+
+            if (assureResponseEndWithTc && !moreDataAvailable && readCounter > 0)
+            {
+                var length = (int)readCounter - 1;
+                if (this._buffer[length] == TerminationCharacter)
                 {
-                    byte[] numArray = new byte[maxLength - read1];
-                    uint read2;
-                    int status2 = this._ThrowOnError(this._driver.Read(this.Session.Handle, numArray, (uint)maxLength - read1, out read2), "VISA Read2 -");
-                    Buffer.BlockCopy(numArray, 0, _buffer, (int)read1, (int)read2);
-                    moreDataAvailable = this._MoreDataIsAvailable(status2);
-                    if (!moreDataAvailable && read1 == maxLength && this._buffer[(int)read1 - 1] != TerminationCharacter) //terminationByte)
-                        moreDataAvailable = true;
-                    read1 += read2;
+                    returnBuffer = new byte[length];
+
+                    Array.Copy(_buffer, returnBuffer, length);
+                    readCount = length;
+                    return returnBuffer;
                 }
             }
-            readCount = (int)read1;
-            return this._buffer;
+
+            returnBuffer = new byte[readCounter];
+            Array.Copy(_buffer, returnBuffer, readCount);
+            return returnBuffer;
         }
     }
 
@@ -355,11 +384,7 @@ public class Visa : IDisposable
       bool assureResponseEndWithTc,
       out int readCount)
     {
-        var str =
-            Encoding.ASCII.GetString(
-                this.Read(maxLength, out moreDataAvailable, assureResponseEndWithTc, out readCount), 0, readCount);
-
-        return str.TrimEnd(new[] { '\r', '\n' });
+        return Encoding.ASCII.GetString(this.Read(maxLength, out moreDataAvailable, assureResponseEndWithTc, out readCount), 0, readCount);
     }
 
     /// <summary>Reads single character</summary>
